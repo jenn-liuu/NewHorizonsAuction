@@ -8,19 +8,79 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, monospace;
 }
 
 body {
+  margin: 0;
+  min-height: 100vh;
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; }
+button, input { font: inherit; }
+:focus-visible { outline: 3px solid #78a5c7; outline-offset: 3px; }
+.skip-link { position: fixed; top: 10px; left: 10px; z-index: 20; transform: translateY(-160%); padding: 12px 18px; background: white; color: #222; }
+.skip-link:focus { transform: translateY(0); }
+.site-header { max-width: 1280px; margin: 0 auto; background: #050505; color: #fff; }
+.site-header-inner { min-height: 110px; padding: 24px 36px; display: flex; align-items: center; justify-content: space-between; gap: 32px; }
+.brand { color: inherit; text-decoration: none; }
+.wordmark { display: grid; gap: 6px; }
+.wordmark-name { font: 25px/.95 Georgia, "Times New Roman", serif; letter-spacing: -1.2px; text-transform: uppercase; }
+.wordmark-auction { font: 600 10px/1 Arial, sans-serif; letter-spacing: 3px; }
+.wordmark-dot { color: #78a5c7; }
+.site-header nav { display: flex; align-items: center; gap: 24px; }
+.nav-link, .nav-status { color: #fff; font-size: 11px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; text-decoration: none; line-height: 1.5; }
+.nav-link:hover { text-decoration: underline; text-underline-offset: 5px; }
+.nav-button { border: 0; padding: 0; background: none; cursor: pointer; }
+.nav-button:disabled { cursor: wait; opacity: .7; }
+.auth-feedback { max-width: 1132px; margin: 18px auto; padding: 0 24px; display: flex; align-items: center; gap: 16px; }
+.page-heading { max-width: 1132px; margin: 45px auto 28px; padding: 0 24px; color: #202020; }
+.page-heading > p { margin: 0 0 12px; font-size: 34px; line-height: 1.15; font-weight: 750; text-transform: uppercase; letter-spacing: .4px; }
+.page-heading > span, .eyebrow { color: #52728b; font-size: 10px; font-weight: 700; letter-spacing: 2px; }
+.account-main { max-width: 1132px; margin: 0 auto 60px; padding: 0 24px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, .85fr); gap: 48px; align-items: stretch; }
+.auction-intro { position: relative; min-height: 520px; overflow: hidden; display: flex; align-items: end; background: linear-gradient(160deg, #173347, #6d8490 58%, #d2d5d2); color: white; }
+.auction-photo { position: absolute; inset: 0; background: linear-gradient(0deg, rgb(0 0 0 / 68%), transparent 78%); }
+.intro-content { position: relative; padding: 40px; }
+.intro-content .eyebrow { color: #d3e2ec; }
+.intro-content h2 { margin: 15px 0; font: 34px/1.2 Georgia, "Times New Roman", serif; }
+.intro-content p { max-width: 370px; line-height: 1.7; color: #f0f0f0; }
+.intro-rule { width: 52px; height: 2px; margin: 24px 0 14px; background: #9dc2db; }
+.intro-note { font-size: 12px; color: #e4e9ec; }
+.account-card { padding: 38px; border: 1px solid #dedede; background: white; box-shadow: 0 12px 34px rgb(0 0 0 / 5%); }
+.account-card h1 { margin: 10px 0 12px; font-size: 27px; text-transform: uppercase; letter-spacing: 1px; }
+.card-intro, .muted { color: #666; line-height: 1.6; }
+.account-card fieldset { display: grid; gap: 12px; margin: 24px 0 0; padding: 0; border: 0; }
+.account-card label { margin-top: 6px; font-size: 13px; font-weight: 600; }
+.account-card input { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid #d5d5d5; border-radius: 4px; background: #fff; }
+.account-card input:focus { border-color: #52728b; }
+.button { min-height: 48px; padding: 12px 16px; border: 0; background: #111; color: #fff; font-weight: 700; cursor: pointer; }
+.button-full { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; }
+.button:disabled, .text-button:disabled { cursor: not-allowed; opacity: .55; }
+.notice { margin: 18px 0; padding: 13px 15px; border: 1px solid #dedede; line-height: 1.55; }
+.notice-error { border-color: #e8b6b6; background: #fff3f3; color: #8d2929; }
+.notice-success { border-color: #aed2be; background: #f0faf4; color: #1d603b; }
+.form-switch { margin-top: 22px; text-align: center; color: #666; }
+.form-switch a, .text-button { color: #385f7c; font-weight: 600; text-underline-offset: 3px; }
+.confirmation-help { margin-top: 24px; padding-top: 18px; border-top: 1px solid #eee; font-size: 13px; color: #666; }
+.text-button { border: 0; padding: 0; background: none; cursor: pointer; }
+.card-footnote { margin: 28px 0 0; text-align: center; color: #777; font-size: 12px; }
+.field-hint { margin: -4px 0 4px; color: #666; font-size: 12px; }
+@media (max-width: 800px) {
+  .account-main { grid-template-columns: 1fr; gap: 24px; }
+  .auction-intro { min-height: 320px; }
+  .site-header-inner { padding: 22px 24px; }
+}
+@media (max-width: 520px) {
+  .site-header-inner { flex-wrap: wrap; justify-content: center; gap: 18px; }
+  .site-header nav { width: 100%; justify-content: center; flex-wrap: wrap; gap: 16px; }
+  .account-main { padding: 0 16px; }
+  .account-card { padding: 26px 20px; }
+  .page-heading { padding: 0 16px; }
+  .page-heading > p { font-size: 27px; }
+  .intro-content { padding: 26px; }
 }
