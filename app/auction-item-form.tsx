@@ -23,7 +23,6 @@ type AuctionItemFormProps = {
 };
 
 type AuctionSettings = {
-  name: string;
   biddingStartsAtEastern: string;
   biddingEndsAtEastern: string;
 };
@@ -61,7 +60,6 @@ const emptyItem: AuctionItemFormValues = {
 };
 
 const emptyAuctionSettings: AuctionSettings = {
-  name: "",
   biddingStartsAtEastern: "",
   biddingEndsAtEastern: "",
 };
@@ -542,34 +540,6 @@ export default function AuctionItemForm({
           </div>
 
           <div className="space-y-5 rounded-lg bg-stone-100 p-4 sm:p-5">
-            <div>
-              <h3 className="text-base font-semibold text-stone-950">
-                Auction details
-              </h3>
-              <p className="mt-1 text-sm leading-6 text-stone-700">
-                Enter the auction name and confirmed bidding dates and times.
-                All times are Eastern Time.
-              </p>
-            </div>
-
-            <div>
-              <label className={labelClassName} htmlFor="auctionName">
-                Auction name <span className="text-rose-700">*</span>
-              </label>
-              <input
-                autoComplete="off"
-                className={fieldClassName}
-                id="auctionName"
-                name="auctionName"
-                onChange={(event) =>
-                  updateAuctionSetting("name", event.target.value)
-                }
-                placeholder="For example, New Horizons Annual Auction"
-                required
-                value={auctionSettings.name}
-              />
-            </div>
-
             <fieldset className="space-y-5">
               <legend className={labelClassName}>Bidding schedule</legend>
               <div className="grid gap-5 sm:grid-cols-2">
