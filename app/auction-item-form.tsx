@@ -282,6 +282,7 @@ export default function AuctionItemForm() {
               <input
                 autoComplete="off"
                 className={fieldClassName}
+                disabled={!canSave}
                 id="title"
                 maxLength={200}
                 name="title"
@@ -298,6 +299,7 @@ export default function AuctionItemForm() {
               </label>
               <textarea
                 className={fieldClassName}
+                disabled={!canSave}
                 id="description"
                 maxLength={5000}
                 name="description"
@@ -318,6 +320,7 @@ export default function AuctionItemForm() {
               </label>
               <input
                 className={fieldClassName}
+                disabled={!canSave}
                 id="donorWebsite"
                 maxLength={2048}
                 name="donorWebsite"
@@ -339,6 +342,7 @@ export default function AuctionItemForm() {
               </label>
               <select
                 className={fieldClassName}
+                disabled={!canSave}
                 id="status"
                 name="status"
                 onChange={(event) => {
@@ -402,6 +406,7 @@ export default function AuctionItemForm() {
                     </span>
                     <input
                       className={`${fieldClassName} pl-8`}
+                      disabled={!canSave}
                       id={field}
                       inputMode="decimal"
                       min={field === "bidIncrement" ? "0.01" : "0"}
@@ -458,7 +463,10 @@ export default function AuctionItemForm() {
               access === "disabled" ||
               access === "error") && (
               <p className="text-sm text-rose-800" role="alert">
-                {accessMessage || "Admin access could not be verified. Saving is disabled."}
+                {access === "not-admin"
+                  ? `Access denied. ${accessMessage || "This account is not an approved auction admin."}`
+                  : accessMessage ||
+                    "Admin access could not be verified. Saving is disabled."}
               </p>
             )}
             {feedback && (
