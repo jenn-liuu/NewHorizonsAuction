@@ -2,13 +2,20 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { supabase } from "@/supabase";
 import {
   ITEM_CATEGORIES,
   isItemCategory,
   type ItemCategory,
 } from "@/item-categories";
+import {
+  getItemPhotoExtension,
+  isItemPhotoPath,
+  ITEM_PHOTO_BUCKET,
+  MAX_ITEM_PHOTOS,
+  validateItemPhoto,
+} from "@/item-photos";
 import { useBidderAuth } from "./components/bidder-auth-provider";
 
 type AccessState =
@@ -44,10 +51,20 @@ type ItemRecord = {
   bid_increment: number | null;
   donor_url: string | null;
   category: string | null;
+  image_urls: string[] | null;
   status: "draft" | "published";
 };
 
 type ApiMessage = { message?: string; id?: string; item?: ItemRecord };
+
+type ItemPhoto = {
+  id: string;
+  value: string | null;
+  previewUrl: string;
+  file?: File;
+};
+
+const EMPTY_PHOTOS: ItemPhoto[] = [];
 
 const initialValues: FormValues = {
   title: "",
@@ -80,14 +97,20 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
   const { user, loading: authLoading } = useBidderAuth();
   const [item, setItem] = useState(initialValues);
   const [savedValues, setSavedValues] = useState(initialValues);
+  const [photos, setPhotos] = useState<ItemPhoto[]>(EMPTY_PHOTOS);
+  const [savedPhotoValues, setSavedPhotoValues] = useState<string[]>([]);
+  const [photoStatus, setPhotoStatus] = useState("");
   const [itemStatus, setItemStatus] = useState<"draft" | "published">("draft");
   const [loadedItemId, setLoadedItemId] = useState<string | null>(null);
   const [accessResult, setAccessResult] = useState<AccessResult | null>(null);
   const [feedback, setFeedback] = useState<{
-    kind: "success" | "error";
+    kind: "success" | "error" | "warning";
     message: string;
   } | null>(null);
   const [saving, setSaving] = useState(false);
+  const objectUrls = useRef(new Set<string>());
+  const activeItemId = useRef(itemId ?? null);
+  const photoSnapshot = photos.map((photo) => photo.value ?? `new:${photo.id}`);
   const currentUserId = user?.id ?? null;
   const access: AccessState = authLoading
     ? "checking"
@@ -106,9 +129,18 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
         : "";
   const isDirty =
     (!itemId || loadedItemId === itemId) &&
-    JSON.stringify(item) !== JSON.stringify(savedValues);
+    (JSON.stringify(item) !== JSON.stringify(savedValues) ||
+      JSON.stringify(photoSnapshot) !== JSON.stringify(savedPhotoValues));
   const canSave =
     access === "ready" && !saving && (!itemId || loadedItemId === itemId);
+
+  useEffect(
+    () => () => {
+      for (const url of objectUrls.current) URL.revokeObjectURL(url);
+      objectUrls.current.clear();
+    },
+    [],
+  );
 
   useEffect(() => {
     const userId = currentUserId;
@@ -186,7 +218,7 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
   useEffect(() => {
     if (!itemId || access !== "ready" || !supabase) return;
 
-    const activeItemId = itemId;
+    const requestedItemId = itemId;
     let active = true;
     const client = supabase;
 
@@ -197,7 +229,7 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
           throw new Error("Your session has expired. Please sign in again.");
         }
         const response = await fetch(
-          `/api/admin/items/${encodeURIComponent(activeItemId)}`,
+          `/api/admin/items/${encodeURIComponent(requestedItemId)}`,
           {
             headers: { Authorization: `Bearer ${data.session.access_token}` },
             cache: "no-store",
@@ -211,11 +243,65 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
         }
         if (!active) return;
         const values = formValuesFromItem(result.item);
+        const imageValues = Array.isArray(result.item.image_urls)
+          ? result.item.image_urls.filter(
+              (imageUrl): imageUrl is string =>
+                typeof imageUrl === "string",
+            )
+          : [];
+        let previewFailure = false;
+        const loadedPhotos = await Promise.all(
+          imageValues.map(async (value): Promise<ItemPhoto> => {
+            if (!isItemPhotoPath(value)) {
+              return {
+                id: crypto.randomUUID(),
+                value,
+                previewUrl: value,
+              };
+            }
+
+            const { data: image, error: imageError } = await client.storage
+              .from(ITEM_PHOTO_BUCKET)
+              .download(value);
+            if (imageError || !image) {
+              previewFailure = true;
+              return {
+                id: crypto.randomUUID(),
+                value,
+                previewUrl: "",
+              };
+            }
+
+            const previewUrl = URL.createObjectURL(image);
+            objectUrls.current.add(previewUrl);
+            return { id: crypto.randomUUID(), value, previewUrl };
+          }),
+        );
+        if (!active) {
+          for (const photo of loadedPhotos) {
+            if (objectUrls.current.delete(photo.previewUrl)) {
+              URL.revokeObjectURL(photo.previewUrl);
+            }
+          }
+          return;
+        }
+        activeItemId.current = requestedItemId;
+        setPhotos(loadedPhotos);
+        setSavedPhotoValues(imageValues);
         setItem(values);
         setSavedValues(values);
         setItemStatus(result.item.status);
-        setLoadedItemId(activeItemId);
+        setLoadedItemId(requestedItemId);
         setFeedback(null);
+
+        if (!active) return;
+        if (previewFailure) {
+          setFeedback({
+            kind: "error",
+            message:
+              "Some saved photo previews could not be loaded. Their image entries are preserved when you save.",
+          });
+        }
       } catch (error) {
         if (!active) return;
         setFeedback({
@@ -296,6 +382,54 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
     setItem((current) => ({ ...current, [field]: value }));
   }
 
+  function addPhotoFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const selected = Array.from(files);
+    const validationMessage =
+      photos.length + selected.length > MAX_ITEM_PHOTOS
+        ? `You can add up to ${MAX_ITEM_PHOTOS} photos per item.`
+        : selected
+            .map(validateItemPhoto)
+            .find((message): message is string => message !== null);
+    if (validationMessage) {
+      setFeedback({ kind: "error", message: validationMessage });
+      return;
+    }
+
+    const additions = selected.map((file): ItemPhoto => {
+      const previewUrl = URL.createObjectURL(file);
+      objectUrls.current.add(previewUrl);
+      return { id: crypto.randomUUID(), value: null, previewUrl, file };
+    });
+    setPhotos((current) => [...current, ...additions]);
+    setFeedback(null);
+  }
+
+  function removePhoto(photoId: string) {
+    const removed = photos.find((photo) => photo.id === photoId);
+    if (!removed) return;
+    setPhotos((current) => current.filter((photo) => photo.id !== photoId));
+    if (objectUrls.current.delete(removed.previewUrl)) {
+      URL.revokeObjectURL(removed.previewUrl);
+    }
+  }
+
+  function movePhoto(photoId: string, direction: -1 | 1) {
+    setPhotos((current) => {
+      const index = current.findIndex((photo) => photo.id === photoId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.length) {
+        return current;
+      }
+      const reordered = [...current];
+      [reordered[index], reordered[nextIndex]] = [
+        reordered[nextIndex],
+        reordered[index],
+      ];
+      return reordered;
+    });
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!canSave || !supabase) return;
@@ -313,6 +447,7 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
 
     setSaving(true);
     setFeedback(null);
+    setPhotoStatus("Saving item details…");
     try {
       const { data, error } = await supabase.auth.getSession();
       if (error || !data.session) {
@@ -332,11 +467,101 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
       }
 
       const intent = action === "publish" ? "publish" : "draft";
-      const payload = { ...item, intent };
+      const newPhotosSelected = photos.some((photo) => photo.file);
+      let targetId = activeItemId.current;
+      if (!targetId && newPhotosSelected) {
+        const createResponse = await fetch("/api/admin/items", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${data.session.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ...item, intent: "draft", imageUrls: [] }),
+        });
+        const created = (await createResponse.json()) as ApiMessage;
+        if (!createResponse.ok || !created.id) {
+          setFeedback({
+            kind: "error",
+            message:
+              created.message ??
+              "The draft could not be saved before uploading photos. Your entries are still here.",
+          });
+          return;
+        }
+        targetId = created.id;
+        activeItemId.current = targetId;
+        setItemStatus("draft");
+      }
+
+      let photoList = [...photos];
+      const photosToUpload = photoList.filter((photo) => photo.file);
+      for (const [index, photo] of photosToUpload.entries()) {
+        const file = photo.file;
+        const extension = file ? getItemPhotoExtension(file.type) : null;
+        const fileError = file ? validateItemPhoto(file) : null;
+        if (!file || !extension || fileError || !targetId) {
+          setFeedback({
+            kind: "error",
+            message:
+              fileError ??
+              "A photo could not be prepared for upload. Your form data is still here.",
+          });
+          return;
+        }
+
+        setPhotoStatus(
+          `Uploading photo ${index + 1} of ${photosToUpload.length}…`,
+        );
+        const objectPath = `items/${targetId}/${crypto.randomUUID()}.${extension}`;
+        const { error: uploadError } = await supabase.storage
+          .from(ITEM_PHOTO_BUCKET)
+          .upload(objectPath, file, {
+            contentType: file.type,
+            upsert: false,
+          });
+        if (uploadError) {
+          setPhotos(photoList);
+          setFeedback({
+            kind: "error",
+            message:
+              `A photo could not be uploaded: ${uploadError.message} Your text and photo selections are still here.`,
+          });
+          return;
+        }
+
+        photoList = photoList.map((current) =>
+          current.id === photo.id
+            ? { ...current, value: objectPath, file: undefined }
+            : current,
+        );
+        setPhotos(photoList);
+      }
+
+      const imageUrls = photoList.map((photo) => photo.value);
+      if (imageUrls.some((value) => value === null)) {
+        setFeedback({
+          kind: "error",
+          message:
+            "A photo is still waiting to upload. Your form data is still here.",
+        });
+        return;
+      }
+      const finalImageUrls = imageUrls.filter(
+        (value): value is string => value !== null,
+      );
+      const photoValuesChanged =
+        JSON.stringify(photoSnapshot) !== JSON.stringify(savedPhotoValues);
+      const payload = {
+        ...item,
+        intent,
+        ...(!targetId || photoValuesChanged
+          ? { imageUrls: finalImageUrls }
+          : {}),
+      };
       const response = await fetch(
-        itemId ? `/api/admin/items/${encodeURIComponent(itemId)}` : "/api/admin/items",
+        targetId ? `/api/admin/items/${encodeURIComponent(targetId)}` : "/api/admin/items",
         {
-          method: itemId ? "PATCH" : "POST",
+          method: targetId ? "PATCH" : "POST",
           headers: {
             Authorization: `Bearer ${data.session.access_token}`,
             "Content-Type": "application/json",
@@ -369,10 +594,19 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
       }
 
       if (action === "draft-and-add") {
+        for (const photo of photos) {
+          if (objectUrls.current.delete(photo.previewUrl)) {
+            URL.revokeObjectURL(photo.previewUrl);
+          }
+        }
+        setPhotos(EMPTY_PHOTOS);
+        setSavedPhotoValues([]);
+        activeItemId.current = null;
         setItem(initialValues);
         setSavedValues(initialValues);
         setItemStatus("draft");
         setLoadedItemId(null);
+        setPhotoStatus("");
         setFeedback({
           kind: "success",
           message: "Draft saved. You can start another item now.",
@@ -382,8 +616,11 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
       }
 
       setSavedValues(item);
+      setSavedPhotoValues(finalImageUrls);
+      activeItemId.current = result.id;
       setLoadedItemId(result.id);
       setItemStatus(intent === "publish" ? "published" : "draft");
+      setPhotoStatus("");
       setFeedback({
         kind: "success",
         message: result.message ?? "Item saved successfully.",
@@ -397,6 +634,7 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
       });
     } finally {
       setSaving(false);
+      setPhotoStatus("");
     }
   }
 
@@ -588,10 +826,114 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
               </select>
             </div>
 
-            <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
-              Photos are not edited here. Saving text changes will preserve any
-              existing item images.
-            </p>
+            <section
+              aria-labelledby="item-photos-heading"
+              className="space-y-4 rounded-lg border border-stone-200 bg-stone-50 p-4 sm:p-5"
+            >
+              <div>
+                <h3
+                  className="font-semibold text-stone-950"
+                  id="item-photos-heading"
+                >
+                  Item photos
+                </h3>
+                <p className="mt-1 text-sm leading-6 text-stone-700">
+                  Add up to {MAX_ITEM_PHOTOS} JPEG, PNG, or WebP photos, up to
+                  5 MB each. The first photo is the main catalog photo; use the
+                  arrows to reorder.
+                </p>
+                <p className="mt-1 text-sm leading-6 text-stone-700">
+                  Draft photos stay private. A photo is available to catalog
+                  visitors only while its item is published. Existing external
+                  sample images are kept as-is.
+                </p>
+              </div>
+              <div>
+                <label className={labelClassName} htmlFor="itemPhotos">
+                  Choose photos
+                </label>
+                <input
+                  accept="image/jpeg,image/png,image/webp"
+                  className={`${fieldClassName} file:mr-3 file:rounded-md file:border-0 file:bg-stone-200 file:px-3 file:py-1.5 file:text-sm file:font-semibold`}
+                  disabled={!canSave || photos.length >= MAX_ITEM_PHOTOS}
+                  id="itemPhotos"
+                  multiple
+                  onChange={(event) => {
+                    addPhotoFiles(event.currentTarget.files);
+                    event.currentTarget.value = "";
+                  }}
+                  type="file"
+                />
+              </div>
+              {photoStatus && (
+                <p className="text-sm text-stone-700" role="status">
+                  {photoStatus}
+                </p>
+              )}
+              {photos.length > 0 && (
+                <ol className="grid gap-4 sm:grid-cols-2">
+                  {photos.map((photo, index) => (
+                    <li
+                      className="overflow-hidden rounded-lg border border-stone-300 bg-white"
+                      key={photo.id}
+                    >
+                      {photo.previewUrl ? (
+                        <>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            alt={`Item photo ${index + 1}`}
+                            className="aspect-[4/3] w-full bg-stone-100 object-cover"
+                            src={photo.previewUrl}
+                          />
+                        </>
+                      ) : (
+                        <div
+                          aria-label={`Preview unavailable for item photo ${index + 1}`}
+                          className="flex aspect-[4/3] items-center justify-center bg-stone-100 px-4 text-center text-sm text-stone-600"
+                          role="img"
+                        >
+                          Preview unavailable; saved image will be preserved
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-2 p-3">
+                        <p className="text-sm font-semibold text-stone-800">
+                          {index === 0 ? "Main photo" : `Photo ${index + 1}`}
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            aria-label={`Move photo ${index + 1} earlier`}
+                            className="min-h-9 rounded-md border border-stone-400 px-3 text-sm font-medium disabled:opacity-50"
+                            disabled={!canSave || index === 0}
+                            onClick={() => movePhoto(photo.id, -1)}
+                            type="button"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            aria-label={`Move photo ${index + 1} later`}
+                            className="min-h-9 rounded-md border border-stone-400 px-3 text-sm font-medium disabled:opacity-50"
+                            disabled={!canSave || index === photos.length - 1}
+                            onClick={() => movePhoto(photo.id, 1)}
+                            type="button"
+                          >
+                            ↓
+                          </button>
+                          <button
+                            aria-label={`Remove photo ${index + 1}`}
+                            className="min-h-9 rounded-md border border-rose-300 px-3 text-sm font-medium text-rose-800 hover:bg-rose-50 disabled:opacity-50"
+                            disabled={!canSave}
+                            onClick={() => removePhoto(photo.id)}
+                            type="button"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
           </section>
 
           <section
@@ -671,7 +1013,9 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
                 className={`rounded-lg border p-4 text-sm ${
                   feedback.kind === "success"
                     ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                    : "border-rose-200 bg-rose-50 text-rose-800"
+                    : feedback.kind === "warning"
+                      ? "border-amber-200 bg-amber-50 text-amber-950"
+                      : "border-rose-200 bg-rose-50 text-rose-800"
                 }`}
                 role={feedback.kind === "error" ? "alert" : "status"}
               >

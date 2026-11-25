@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { normalizeSupabaseUrl } from "@/supabase-url";
+import { catalogItemPhotoUrl } from "@/item-photos";
 
 type Item = {
   id: string;
@@ -45,14 +46,15 @@ function ItemCard({ item }: { item: Item }) {
   const photo = Array.isArray(item.image_urls)
     ? item.image_urls[0]
     : undefined;
+  const photoUrl = photo ? catalogItemPhotoUrl(photo) : undefined;
 
   return (
     <article className="flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white">
       <div className="aspect-[4/3] w-full bg-slate-200">
-        {photo ? (
+        {photoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={photo}
+            src={photoUrl}
             alt={item.title}
             className="h-full w-full object-cover"
           />

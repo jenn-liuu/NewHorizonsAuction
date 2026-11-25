@@ -73,11 +73,17 @@ export async function POST(request: Request) {
   if (!validation.ok) {
     return jsonResponse({ message: validation.message }, 400);
   }
+  if (validation.item.image_urls?.some((imageUrl) => imageUrl.startsWith("items/"))) {
+    return jsonResponse(
+      { message: "New item photos can only be attached after the item is created." },
+      400,
+    );
+  }
 
   try {
     const { data, error } = await authorization.client
       .from("items")
-      .insert(validation.item)
+      .insert({ ...validation.item, image_urls: validation.item.image_urls ?? [] })
       .select("id")
       .single();
 

@@ -1,4 +1,5 @@
 import { authorizeApprovedAdmin, jsonResponse, parseItemInput } from "../shared";
+import { isItemPhotoPathForId } from "@/item-photos";
 
 export async function GET(
   request: Request,
@@ -12,7 +13,7 @@ export async function GET(
     const { data, error } = await authorization.client
       .from("items")
       .select(
-        "id, title, description, retail_value, minimum_bid, bid_increment, donor_url, category, status, created_at",
+        "id, title, description, retail_value, minimum_bid, bid_increment, donor_url, category, image_urls, status, created_at",
       )
       .eq("id", id)
       .maybeSingle();
@@ -53,6 +54,18 @@ export async function PATCH(
   const validation = parseItemInput(input);
   if (!validation.ok) {
     return jsonResponse({ message: validation.message }, 400);
+  }
+  if (
+    validation.item.image_urls?.some(
+      (imageUrl) =>
+        imageUrl.startsWith("items/") &&
+        !isItemPhotoPathForId(imageUrl, id),
+    )
+  ) {
+    return jsonResponse(
+      { message: "Each uploaded photo must belong to this item." },
+      400,
+    );
   }
 
   try {

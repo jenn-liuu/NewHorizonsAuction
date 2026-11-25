@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { normalizeSupabaseUrl } from "@/supabase-url";
 import { isItemCategory, type ItemCategory } from "@/item-categories";
+import { isItemPhotoPath } from "@/item-photos";
 
 type AuthorizationResult =
   | { ok: true; client: SupabaseClient }
@@ -15,6 +16,7 @@ export type ItemWrite = {
   donor_url: string | null;
   category: ItemCategory;
   status: "draft" | "published";
+  image_urls?: string[];
 };
 
 export function jsonResponse(body: object, status: number): Response {
@@ -220,6 +222,26 @@ export function parseItemInput(
     };
   }
 
+  let imageUrls: string[] | undefined;
+  if (value.imageUrls !== undefined) {
+    if (
+      !Array.isArray(value.imageUrls) ||
+      value.imageUrls.some(
+        (imageUrl) =>
+          typeof imageUrl !== "string" ||
+          imageUrl.length > 2048 ||
+          (!isItemPhotoPath(imageUrl) && !isHttpImageUrl(imageUrl)),
+      )
+    ) {
+      return {
+        ok: false,
+        message:
+          "Photos must be valid HTTP(S) image URLs or item photo paths.",
+      };
+    }
+    imageUrls = value.imageUrls;
+  }
+
   const descriptionInput = value.description;
   if (descriptionInput !== undefined && typeof descriptionInput !== "string") {
     return { ok: false, message: "The item description is invalid." };
@@ -294,6 +316,16 @@ export function parseItemInput(
       donor_url: donorUrl,
       category: value.category,
       status: intent === "publish" ? "published" : "draft",
+      ...(imageUrls === undefined ? {} : { image_urls: imageUrls }),
     },
   };
+}
+
+function isHttpImageUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
 }
