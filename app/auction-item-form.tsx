@@ -1,11 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { supabase } from "@/supabase";
 import { useBidderAuth } from "./components/bidder-auth-provider";
 
-type ItemStatus = "draft" | "published";
 type AccessState =
   | "checking"
   | "signed-out"
@@ -27,28 +27,52 @@ type FormValues = {
   startingBid: string;
   bidIncrement: string;
   donorWebsite: string;
-  status: ItemStatus;
 };
 
-type ApiMessage = { message?: string };
+type ItemRecord = {
+  id: string;
+  title: string;
+  description: string | null;
+  retail_value: number | null;
+  minimum_bid: number | null;
+  bid_increment: number | null;
+  donor_url: string | null;
+  status: "draft" | "published";
+};
+
+type ApiMessage = { message?: string; id?: string; item?: ItemRecord };
 
 const initialValues: FormValues = {
   title: "",
   description: "",
   retailValue: "",
   startingBid: "",
-  bidIncrement: "25",
+  bidIncrement: "",
   donorWebsite: "",
-  status: "draft",
 };
 
 const fieldClassName =
   "mt-2 block w-full rounded-lg border border-stone-300 bg-white px-3.5 py-2.5 text-sm text-stone-900 shadow-sm outline-none transition placeholder:text-stone-500 focus-visible:border-stone-950 focus-visible:ring-2 focus-visible:ring-stone-950/25";
 const labelClassName = "block text-sm font-medium text-stone-800";
 
-export default function AuctionItemForm() {
+function formValuesFromItem(record: ItemRecord): FormValues {
+  return {
+    title: record.title,
+    description: record.description ?? "",
+    retailValue: record.retail_value?.toString() ?? "",
+    startingBid: record.minimum_bid?.toString() ?? "",
+    bidIncrement: record.bid_increment?.toString() ?? "",
+    donorWebsite: record.donor_url ?? "",
+  };
+}
+
+export default function AuctionItemForm({ itemId }: { itemId?: string }) {
+  const router = useRouter();
   const { user, loading: authLoading } = useBidderAuth();
   const [item, setItem] = useState(initialValues);
+  const [savedValues, setSavedValues] = useState(initialValues);
+  const [itemStatus, setItemStatus] = useState<"draft" | "published">("draft");
+  const [loadedItemId, setLoadedItemId] = useState<string | null>(null);
   const [accessResult, setAccessResult] = useState<AccessResult | null>(null);
   const [feedback, setFeedback] = useState<{
     kind: "success" | "error";
@@ -71,6 +95,11 @@ export default function AuctionItemForm() {
       : accessResult?.userId === currentUserId
         ? accessResult.message
         : "";
+  const isDirty =
+    (!itemId || loadedItemId === itemId) &&
+    JSON.stringify(item) !== JSON.stringify(savedValues);
+  const canSave =
+    access === "ready" && !saving && (!itemId || loadedItemId === itemId);
 
   useEffect(() => {
     const userId = currentUserId;
@@ -101,19 +130,13 @@ export default function AuctionItemForm() {
         }
 
         const response = await fetch("/api/admin/items", {
-          headers: {
-            Authorization: `Bearer ${data.session.access_token}`,
-          },
+          headers: { Authorization: `Bearer ${data.session.access_token}` },
           cache: "no-store",
         });
         const result = (await response.json()) as ApiMessage;
         if (!active) return;
         if (response.ok) {
-          setAccessResult({
-            userId,
-            state: "ready",
-            message: "",
-          });
+          setAccessResult({ userId, state: "ready", message: "" });
           return;
         }
         setAccessResult({
@@ -147,6 +170,116 @@ export default function AuctionItemForm() {
     };
   }, [authLoading, currentUserId]);
 
+  useEffect(() => {
+    if (access === "signed-out") router.replace("/login");
+  }, [access, router]);
+
+  useEffect(() => {
+    if (!itemId || access !== "ready" || !supabase) return;
+
+    const activeItemId = itemId;
+    let active = true;
+    const client = supabase;
+
+    async function loadItem() {
+      try {
+        const { data, error } = await client.auth.getSession();
+        if (error || !data.session) {
+          throw new Error("Your session has expired. Please sign in again.");
+        }
+        const response = await fetch(
+          `/api/admin/items/${encodeURIComponent(activeItemId)}`,
+          {
+            headers: { Authorization: `Bearer ${data.session.access_token}` },
+            cache: "no-store",
+          },
+        );
+        const result = (await response.json()) as ApiMessage;
+        if (!response.ok || !result.item) {
+          throw new Error(
+            result.message ?? "This auction item could not be loaded.",
+          );
+        }
+        if (!active) return;
+        const values = formValuesFromItem(result.item);
+        setItem(values);
+        setSavedValues(values);
+        setItemStatus(result.item.status);
+        setLoadedItemId(activeItemId);
+        setFeedback(null);
+      } catch (error) {
+        if (!active) return;
+        setFeedback({
+          kind: "error",
+          message:
+            error instanceof Error
+              ? error.message
+              : "This auction item could not be loaded.",
+        });
+      }
+    }
+
+    void loadItem();
+    return () => {
+      active = false;
+    };
+  }, [access, itemId]);
+
+  useEffect(() => {
+    if (!isDirty || saving) return;
+
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const warnBeforeLinkNavigation = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      const link = event.target.closest("a[href]");
+      if (!(link instanceof HTMLAnchorElement)) return;
+      if (
+        link.target === "_blank" ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      ) {
+        return;
+      }
+      const destination = new URL(link.href, window.location.href);
+      if (
+        destination.origin !== window.location.origin ||
+        destination.href === window.location.href
+      ) {
+        return;
+      }
+      if (!window.confirm("You have unsaved changes. Leave this form?")) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+      }
+    };
+    let restoringHistory = false;
+    const warnBeforeHistoryNavigation = () => {
+      if (restoringHistory) {
+        restoringHistory = false;
+        return;
+      }
+      if (!window.confirm("You have unsaved changes. Leave this form?")) {
+        restoringHistory = true;
+        window.history.forward();
+      }
+    };
+
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    window.addEventListener("popstate", warnBeforeHistoryNavigation);
+    document.addEventListener("click", warnBeforeLinkNavigation, true);
+    return () => {
+      window.removeEventListener("beforeunload", warnBeforeUnload);
+      window.removeEventListener("popstate", warnBeforeHistoryNavigation);
+      document.removeEventListener("click", warnBeforeLinkNavigation, true);
+    };
+  }, [isDirty, saving]);
+
   function updateField<Field extends keyof FormValues>(
     field: Field,
     value: FormValues[Field],
@@ -156,7 +289,18 @@ export default function AuctionItemForm() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (saving || access !== "ready" || !supabase) return;
+    if (!canSave || !supabase) return;
+
+    const submitter = (event.nativeEvent as SubmitEvent)
+      .submitter as HTMLButtonElement | null;
+    const action = submitter?.value;
+    if (
+      action !== "draft" &&
+      action !== "draft-and-add" &&
+      action !== "publish"
+    ) {
+      return;
+    }
 
     setSaving(true);
     setFeedback(null);
@@ -165,7 +309,8 @@ export default function AuctionItemForm() {
       if (error || !data.session) {
         setFeedback({
           kind: "error",
-          message: "Your session could not be verified. Sign in again; your entries are still here.",
+          message:
+            "Your session could not be verified. Sign in again; your entries are still here.",
         });
         if (currentUserId) {
           setAccessResult({
@@ -177,16 +322,21 @@ export default function AuctionItemForm() {
         return;
       }
 
-      const response = await fetch("/api/admin/items", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${data.session.access_token}`,
-          "Content-Type": "application/json",
+      const intent = action === "publish" ? "publish" : "draft";
+      const payload = { ...item, intent };
+      const response = await fetch(
+        itemId ? `/api/admin/items/${encodeURIComponent(itemId)}` : "/api/admin/items",
+        {
+          method: itemId ? "PATCH" : "POST",
+          headers: {
+            Authorization: `Bearer ${data.session.access_token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(item),
-      });
+      );
       const result = (await response.json()) as ApiMessage;
-      if (!response.ok) {
+      if (!response.ok || !result.id) {
         setFeedback({
           kind: "error",
           message:
@@ -194,30 +344,42 @@ export default function AuctionItemForm() {
             "The item was not saved. Your entries are still here.",
         });
         if (response.status === 401 || response.status === 403) {
-          if (currentUserId) {
-            setAccessResult({
-              userId: currentUserId,
-              state: response.status === 403 ? "not-admin" : "signed-out",
-              message:
-                result.message ?? "Admin access could not be verified.",
-            });
-          }
+          setAccessResult({
+            userId: currentUserId,
+            state: response.status === 403 ? "not-admin" : "signed-out",
+            message: result.message ?? "Admin access could not be verified.",
+          });
         } else if (response.status === 503) {
-          if (currentUserId) {
-            setAccessResult({
-              userId: currentUserId,
-              state: "disabled",
-              message: result.message ?? "Saving is not enabled yet.",
-            });
-          }
+          setAccessResult({
+            userId: currentUserId,
+            state: "disabled",
+            message: result.message ?? "Saving is not enabled yet.",
+          });
         }
         return;
       }
 
+      if (action === "draft-and-add") {
+        setItem(initialValues);
+        setSavedValues(initialValues);
+        setItemStatus("draft");
+        setLoadedItemId(null);
+        setFeedback({
+          kind: "success",
+          message: "Draft saved. You can start another item now.",
+        });
+        router.push("/admin/items/new");
+        return;
+      }
+
+      setSavedValues(item);
+      setLoadedItemId(result.id);
+      setItemStatus(intent === "publish" ? "published" : "draft");
       setFeedback({
         kind: "success",
         message: result.message ?? "Item saved successfully.",
       });
+      if (!itemId) router.replace(`/admin/items/${encodeURIComponent(result.id)}`);
     } catch {
       setFeedback({
         kind: "error",
@@ -229,7 +391,41 @@ export default function AuctionItemForm() {
     }
   }
 
-  const canSave = access === "ready" && !saving;
+  if (access !== "ready") {
+    const isVerifying = access === "checking";
+    const isSignedOut = access === "signed-out";
+    const heading =
+      access === "not-admin"
+        ? "Access denied"
+        : isVerifying
+          ? "Checking access"
+          : isSignedOut
+            ? "Sign in required"
+            : "Admin access could not be verified";
+
+    return (
+      <main className="min-h-screen bg-stone-50 px-4 py-10 font-sans text-stone-900 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-4xl rounded-xl border border-stone-300 bg-white p-6 shadow-sm">
+          <h1 className="font-serif text-2xl font-semibold text-stone-950">
+            {heading}
+          </h1>
+          <p
+            className="mt-3 text-sm leading-6 text-stone-700"
+            role={isVerifying || isSignedOut ? "status" : "alert"}
+          >
+            {isVerifying
+              ? "Checking your sign-in and approved-admin access…"
+              : isSignedOut
+                ? "Redirecting to sign in…"
+                : accessMessage ||
+                  (access === "not-admin"
+                    ? "This account is not an approved auction admin."
+                    : "Please try again after access can be verified.")}
+          </p>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-stone-50 px-4 py-10 font-sans text-stone-900 sm:px-6 lg:px-8">
@@ -246,14 +442,34 @@ export default function AuctionItemForm() {
         </div>
 
         <header className="mb-8">
-          <h1 className="font-serif text-3xl font-semibold tracking-tight text-stone-950 sm:text-4xl">
-            Prepare your auction item
+          <Link
+            className="text-sm font-semibold text-stone-700 underline underline-offset-2"
+            href="/admin/items"
+          >
+            Back to item management
+          </Link>
+          <h1 className="mt-4 font-serif text-3xl font-semibold tracking-tight text-stone-950 sm:text-4xl">
+            {itemId ? "Edit auction item" : "Prepare your auction item"}
           </h1>
           <p className="mt-3 max-w-2xl text-base leading-7 text-stone-700">
-            Add the item details and bidding amounts that appear in the public
-            catalog.
+            Save an incomplete draft to return to it later, or complete all
+            required fields to publish it to the public catalog.
           </p>
+          {itemId && loadedItemId === itemId && (
+            <p className="mt-3 text-sm font-medium text-stone-700">
+              Current status: {itemStatus === "draft" ? "Draft" : "Published"}
+            </p>
+          )}
         </header>
+
+        {itemId &&
+          access === "ready" &&
+          loadedItemId !== itemId &&
+          !feedback && (
+          <p className="mb-4 text-sm text-stone-700" role="status">
+            Loading saved item…
+          </p>
+          )}
 
         <form
           className="overflow-hidden rounded-xl border border-stone-300 bg-white shadow-md shadow-stone-900/5"
@@ -295,7 +511,10 @@ export default function AuctionItemForm() {
 
             <div>
               <label className={labelClassName} htmlFor="description">
-                Description <span className="text-rose-700">*</span>
+                Description{" "}
+                <span className="font-normal text-stone-500">
+                  (required to publish)
+                </span>
               </label>
               <textarea
                 className={fieldClassName}
@@ -331,42 +550,11 @@ export default function AuctionItemForm() {
                 type="url"
                 value={item.donorWebsite}
               />
-              <p className="mt-2 text-sm leading-6 text-stone-700">
-                Saved to the catalog&apos;s donor link field.
-              </p>
-            </div>
-
-            <div className="max-w-sm">
-              <label className={labelClassName} htmlFor="status">
-                Item status
-              </label>
-              <select
-                className={fieldClassName}
-                disabled={!canSave}
-                id="status"
-                name="status"
-                onChange={(event) => {
-                  if (
-                    event.target.value === "draft" ||
-                    event.target.value === "published"
-                  ) {
-                    updateField("status", event.target.value);
-                  }
-                }}
-                value={item.status}
-              >
-                <option value="draft">Draft</option>
-                <option value="published">Published</option>
-              </select>
-              <p className="mt-2 text-sm leading-6 text-stone-700">
-                New items stay as drafts unless you explicitly choose Published.
-              </p>
             </div>
 
             <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">
-              Not saved yet: category, donor name, breeding details, auction
-              schedule, and photos. Those fields are hidden until database
-              support is confirmed.
+              Photos are not edited here. Saving text changes will preserve any
+              existing item images.
             </p>
           </section>
 
@@ -382,23 +570,25 @@ export default function AuctionItemForm() {
                 Value and bidding
               </h2>
               <p className="mt-1 text-sm leading-6 text-stone-700">
-                Monetary amounts are entered and stored in dollars, matching
-                the catalog&apos;s retail_value, minimum_bid, and bid_increment
-                fields.
+                Amounts are entered and stored in dollars. They may be left
+                blank in a draft and are required to publish.
               </p>
             </div>
 
             <div className="grid gap-5 sm:grid-cols-3">
               {(
                 [
-                  ["retailValue", "Retail value ($)", "0.00"],
-                  ["startingBid", "Starting bid ($)", "0.00"],
-                  ["bidIncrement", "Bid increment ($)", "25.00"],
+                  ["retailValue", "Retail value ($)", "0.00", "0"],
+                  ["startingBid", "Starting bid ($)", "0.00", "0"],
+                  ["bidIncrement", "Bid increment ($)", "25.00", "0.01"],
                 ] as const
-              ).map(([field, label, placeholder]) => (
+              ).map(([field, label, placeholder, minimum]) => (
                 <div key={field}>
                   <label className={labelClassName} htmlFor={field}>
-                    {label} <span className="text-rose-700">*</span>
+                    {label}{" "}
+                    <span className="font-normal text-stone-500">
+                      (required to publish)
+                    </span>
                   </label>
                   <div className="relative">
                     <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-sm text-stone-500">
@@ -409,7 +599,7 @@ export default function AuctionItemForm() {
                       disabled={!canSave}
                       id={field}
                       inputMode="decimal"
-                      min={field === "bidIncrement" ? "0.01" : "0"}
+                      min={minimum}
                       name={field}
                       onChange={(event) =>
                         updateField(field, event.target.value)
@@ -436,39 +626,10 @@ export default function AuctionItemForm() {
             >
               Save access
             </h2>
-            {access === "checking" && (
-              <p className="text-sm text-stone-700" role="status">
-                Checking your sign-in and approved-admin access…
-              </p>
-            )}
-            {access === "ready" && (
-              <p className="text-sm text-emerald-800" role="status">
-                Approved-admin membership is verified. The item INSERT is
-                independently checked by database RLS.
-              </p>
-            )}
-            {access === "signed-out" && (
-              <p className="text-sm text-stone-700">
-                <Link
-                  className="font-semibold underline underline-offset-2"
-                  href="/login"
-                >
-                  Sign in
-                </Link>{" "}
-                with an approved admin account to create an item.
-                {accessMessage ? ` ${accessMessage}` : ""}
-              </p>
-            )}
-            {(access === "not-admin" ||
-              access === "disabled" ||
-              access === "error") && (
-              <p className="text-sm text-rose-800" role="alert">
-                {access === "not-admin"
-                  ? `Access denied. ${accessMessage || "This account is not an approved auction admin."}`
-                  : accessMessage ||
-                    "Admin access could not be verified. Saving is disabled."}
-              </p>
-            )}
+            <p className="text-sm text-emerald-800" role="status">
+              Approved-admin membership is verified. Item access is also
+              enforced by database RLS.
+            </p>
             {feedback && (
               <p
                 className={`rounded-lg border p-4 text-sm ${
@@ -483,18 +644,42 @@ export default function AuctionItemForm() {
             )}
           </section>
 
-          <footer className="flex flex-col gap-4 border-t border-stone-200 bg-stone-50 p-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-            <p className="max-w-lg text-sm leading-5 text-stone-600">
-              Saving remains disabled until the reviewed admin migration is
-              applied and the server-side access check is enabled.
-            </p>
+          <footer className="flex flex-col gap-3 border-t border-stone-200 bg-stone-50 p-5 sm:flex-row sm:items-center sm:justify-end sm:px-8">
             <button
               aria-busy={saving}
-              className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-lg bg-stone-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-stone-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-950 disabled:cursor-not-allowed disabled:bg-stone-300 disabled:text-stone-700"
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-stone-400 bg-white px-5 py-2.5 text-sm font-semibold text-stone-900 transition hover:bg-stone-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-950 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-500"
               disabled={!canSave}
+              formNoValidate
+              name="intent"
               type="submit"
+              value="draft"
             >
-              {saving ? "Saving item…" : "Save item"}
+              {saving ? "Saving…" : "Save draft"}
+            </button>
+            <button
+              aria-busy={saving}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-stone-400 bg-white px-5 py-2.5 text-sm font-semibold text-stone-900 transition hover:bg-stone-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-950 disabled:cursor-not-allowed disabled:bg-stone-200 disabled:text-stone-500"
+              disabled={!canSave}
+              formNoValidate
+              name="intent"
+              type="submit"
+              value="draft-and-add"
+            >
+              Save draft and add another
+            </button>
+            <button
+              aria-busy={saving}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-stone-950 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-stone-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-stone-950 disabled:cursor-not-allowed disabled:bg-stone-300 disabled:text-stone-700"
+              disabled={!canSave}
+              name="intent"
+              type="submit"
+              value="publish"
+            >
+              {saving
+                ? "Saving…"
+                : itemStatus === "published"
+                  ? "Save and publish"
+                  : "Publish"}
             </button>
           </footer>
         </form>

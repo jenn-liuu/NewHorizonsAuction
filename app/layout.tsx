@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
 import "./globals.css";
 import { AuthFeedback } from "./components/auth-feedback";
@@ -18,7 +19,17 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <a href="#main-content" className="skip-link">
             Skip to content
           </a>
-          <SiteHeader />
+          <Suspense
+            fallback={
+              <header className="site-header" aria-hidden="true">
+                <div className="site-header-inner">
+                  <span className="brand">New Horizons Auction</span>
+                </div>
+              </header>
+            }
+          >
+            <SiteHeader />
+          </Suspense>
           <AuthFeedback />
           <div id="main-content">{children}</div>
         </BidderAuthProvider>

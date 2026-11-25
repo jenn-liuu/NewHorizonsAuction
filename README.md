@@ -27,11 +27,12 @@ Use the project URL (not its `/rest/v1` endpoint) and publishable key from
 Supabase project settings. The app normalizes an existing URL ending in
 `/rest/v1` for compatibility.
 
-## Admin item creation setup
+## Admin item management setup
 
-Saving at `/admin/items/new` stays disabled unless the server-side
-`ADMIN_ITEM_CREATION_ENABLED` flag is exactly `true`. Do not enable it until the
-reviewed migration has been checked and applied and the RLS checks below pass.
+Saving at `/admin/items` and `/admin/items/new` stays disabled unless the
+server-side `ADMIN_ITEM_CREATION_ENABLED` flag is exactly `true`. Do not enable
+it until both reviewed migrations have been checked and applied and the RLS
+checks below pass.
 
 1. In Supabase SQL Editor, inspect the current item schema:
 
@@ -58,29 +59,39 @@ reviewed migration has been checked and applied and the RLS checks below pass.
    columns have no database default or identity value, or if the money columns
    do not have a supported numeric type.
 
-2. Inspect every current item `INSERT` and `ALL` policy:
+2. Inspect every current item policy:
 
    ```sql
    select policyname, permissive, roles, cmd, qual, with_check
    from pg_policies
    where schemaname = 'public'
      and tablename = 'items'
-     and cmd in ('INSERT', 'ALL')
    order by policyname;
    ```
 
-   The migration intentionally aborts if this query returns any rows. Review
-   any existing policy with the team before changing it; do not assume that
-   adding another policy narrows an existing permissive policy.
+   Review the existing public published-item `SELECT` rule and approved-admin
+   `INSERT` rule. The item-management migration is additive and does not
+   replace or remove any existing policy.
 
 3. Review
    [`supabase/migrations/20261118175000_approved_admins_item_insert.sql`](./supabase/migrations/20261118175000_approved_admins_item_insert.sql).
    It creates the `approved_admins` membership table, self-read RLS policy, and
    the `items` INSERT policy, but does not modify or remove existing `items`
-   policies. Apply it manually only after the preflight returns no policies and
-   the expected catalog columns/RLS are confirmed.
+   policies. Apply it manually only if it has not already been applied, after
+   its preflight and the expected catalog columns/RLS are confirmed.
 
-4. Add the intended admin user's Auth UUID to `public.approved_admins` in SQL
+4. Review
+   [`supabase/migrations/20261125180000_admin_item_drafts_and_updates.sql`](./supabase/migrations/20261125180000_admin_item_drafts_and_updates.sql).
+   It makes the description and bidding amount columns nullable for drafts,
+   requires a title for every item and complete valid values for published
+   items, and adds approved-admin `SELECT`/`UPDATE` grants and RLS policies. It
+   does not change public access, the existing `INSERT` policy, or `image_urls`;
+   it never inserts placeholder money values. It aborts if the expected schema
+   is missing, money column types differ, or existing rows violate the new
+   requirements. Apply it manually only after reviewing the schema and every
+   current item policy.
+
+5. Add the intended admin user's Auth UUID to `public.approved_admins` in SQL
    Editor:
 
    ```sql
@@ -88,7 +99,7 @@ reviewed migration has been checked and applied and the RLS checks below pass.
    values ('<AUTH_USER_UUID>');
    ```
 
-5. Confirm the migration created the expected policies and RLS remains enabled:
+6. Confirm the migrations created the expected policies and RLS remains enabled:
 
    ```sql
    select policyname, permissive, roles, cmd, qual, with_check
@@ -102,11 +113,13 @@ reviewed migration has been checked and applied and the RLS checks below pass.
    where oid = 'public.items'::regclass;
    ```
 
-   The `items` INSERT policy must be permissive and check
-   `approved_admins.user_id = auth.uid()`. The only `approved_admins` policy
-   should allow authenticated users to read their own membership.
+   Confirm the existing public item policy still limits public reads to
+   published items, and the admin `SELECT`, `INSERT`, and `UPDATE` policies
+   require an `approved_admins.user_id = auth.uid()` membership. The only
+   `approved_admins` policy should allow authenticated users to read their own
+   membership.
 
-6. With a normal, non-admin test user's access token, send a direct authenticated
+7. With a normal, non-admin test user's access token, send a direct authenticated
    `POST /rest/v1/items` using the catalog's required fields (omitting
    `image_urls`, `id`, and `created_at`). It must be rejected by RLS and create
    no row. This direct PostgREST test is important: the app route also denies
@@ -134,12 +147,14 @@ reviewed migration has been checked and applied and the RLS checks below pass.
    this insert succeeds, stop: do not enable app saving, and review the
    `items` policies before proceeding.
 
-7. Only after schema and policy checks pass, set
+8. Only after schema and policy checks pass, set
    `ADMIN_ITEM_CREATION_ENABLED=true` in the server environment and restart or
    redeploy the app. Sign in as an approved admin, verify a no-session request
-   is rejected, and test Draft and Published separately at
-   `/admin/items/new`. Confirm published items appear at `/`. Leave the flag
-   unset or `false` to keep saving disabled.
+   is rejected, and test the Draft and Published lists at `/admin/items`.
+   Create an incomplete draft, reopen and update it, use “Save draft and add
+   another,” then publish a complete item from the shared form. Confirm drafts
+   are absent from public and non-admin reads and published items still appear
+   at `/`. Leave the flag unset or `false` to keep saving disabled.
 
 
 ### 4. Run the development server

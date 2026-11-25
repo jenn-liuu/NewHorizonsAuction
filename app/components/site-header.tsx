@@ -2,27 +2,37 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/supabase";
 import { AuctionWordmark } from "./auction-wordmark";
 import { useBidderAuth } from "./bidder-auth-provider";
 
 type AdminMembershipCheck = {
-  userId: string;
+  user: User;
   status: "approved" | "not-approved" | "error";
 };
+
+const subscribeToHydration = () => () => {};
+const getClientHydrationSnapshot = () => true;
+const getServerHydrationSnapshot = () => false;
 
 export function SiteHeader() {
   const { user, loading, loggingOut, logout } = useBidderAuth();
   const pathname = usePathname();
+  const isHydrated = useSyncExternalStore(
+    subscribeToHydration,
+    getClientHydrationSnapshot,
+    getServerHydrationSnapshot,
+  );
   const [membershipCheck, setMembershipCheck] =
     useState<AdminMembershipCheck | null>(null);
 
   useEffect(() => {
-    const userId = user?.id;
-    if (loading || !userId || !supabase) return;
+    if (loading || !user || !supabase) return;
     const client: NonNullable<typeof supabase> = supabase;
-    const verifiedUserId = userId;
+    const verifiedUser = user;
+    const verifiedUserId = user.id;
 
     let active = true;
 
@@ -40,17 +50,17 @@ export function SiteHeader() {
             "Could not verify approved-admin navigation access.",
             error,
           );
-          setMembershipCheck({ userId: verifiedUserId, status: "error" });
+          setMembershipCheck({ user: verifiedUser, status: "error" });
           return;
         }
         setMembershipCheck({
-          userId: verifiedUserId,
+          user: verifiedUser,
           status: data ? "approved" : "not-approved",
         });
       } catch (error) {
         if (!active) return;
         console.error("Approved-admin navigation check failed.", error);
-        setMembershipCheck({ userId: verifiedUserId, status: "error" });
+        setMembershipCheck({ user: verifiedUser, status: "error" });
       }
     }
 
@@ -58,11 +68,11 @@ export function SiteHeader() {
     return () => {
       active = false;
     };
-  }, [loading, user?.id]);
+  }, [loading, user]);
 
   const isVerifiedAdmin =
     user !== null &&
-    membershipCheck?.userId === user.id &&
+    membershipCheck?.user === user &&
     membershipCheck.status === "approved";
 
   return (
@@ -79,20 +89,31 @@ export function SiteHeader() {
           >
             Catalog
           </Link>
-          {loading ? (
+          {!isHydrated || loading ? (
             <span className="nav-status">Checking session…</span>
           ) : user ? (
             <>
               {isVerifiedAdmin && (
-                <Link
-                  href="/admin/items/new"
-                  className="nav-link"
-                  aria-current={
-                    pathname === "/admin/items/new" ? "page" : undefined
-                  }
-                >
-                  New item
-                </Link>
+                <>
+                  <Link
+                    href="/admin/items"
+                    className="nav-link"
+                    aria-current={
+                      pathname.startsWith("/admin/items") ? "page" : undefined
+                    }
+                  >
+                    Manage items
+                  </Link>
+                  <Link
+                    href="/admin/items/new"
+                    className="nav-link"
+                    aria-current={
+                      pathname === "/admin/items/new" ? "page" : undefined
+                    }
+                  >
+                    New item
+                  </Link>
+                </>
               )}
               <button
                 type="button"

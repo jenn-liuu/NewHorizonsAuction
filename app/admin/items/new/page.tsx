@@ -6,5 +6,5 @@ export const metadata: Metadata = {
 };
 
 export default function NewAuctionItemPage() {
-  return <AuctionItemForm />;
+  return <AuctionItemForm key="new-item" />;
 }
