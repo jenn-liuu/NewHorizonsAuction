@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { supabase } from "@/supabase";
+import {
+  ITEM_CATEGORIES,
+  isItemCategory,
+  type ItemCategory,
+} from "@/item-categories";
 import { useBidderAuth } from "./components/bidder-auth-provider";
 
 type AccessState =
@@ -27,6 +32,7 @@ type FormValues = {
   startingBid: string;
   bidIncrement: string;
   donorWebsite: string;
+  category: ItemCategory | "";
 };
 
 type ItemRecord = {
@@ -37,6 +43,7 @@ type ItemRecord = {
   minimum_bid: number | null;
   bid_increment: number | null;
   donor_url: string | null;
+  category: string | null;
   status: "draft" | "published";
 };
 
@@ -49,6 +56,7 @@ const initialValues: FormValues = {
   startingBid: "",
   bidIncrement: "",
   donorWebsite: "",
+  category: "",
 };
 
 const fieldClassName =
@@ -63,6 +71,7 @@ function formValuesFromItem(record: ItemRecord): FormValues {
     startingBid: record.minimum_bid?.toString() ?? "",
     bidIncrement: record.bid_increment?.toString() ?? "",
     donorWebsite: record.donor_url ?? "",
+    category: isItemCategory(record.category) ? record.category : "",
   };
 }
 
@@ -550,6 +559,33 @@ export default function AuctionItemForm({ itemId }: { itemId?: string }) {
                 type="url"
                 value={item.donorWebsite}
               />
+            </div>
+
+            <div className="max-w-sm">
+              <label className={labelClassName} htmlFor="category">
+                Category <span className="text-rose-700">*</span>
+              </label>
+              <select
+                className={fieldClassName}
+                disabled={!canSave}
+                id="category"
+                name="category"
+                onChange={(event) => {
+                  const category = ITEM_CATEGORIES.find(
+                    (candidate) => candidate === event.target.value,
+                  );
+                  updateField("category", category ?? "");
+                }}
+                required
+                value={item.category}
+              >
+                <option value="">Choose a category</option>
+                {ITEM_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <p className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950">

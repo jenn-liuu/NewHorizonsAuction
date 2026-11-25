@@ -31,7 +31,7 @@ Supabase project settings. The app normalizes an existing URL ending in
 
 Saving at `/admin/items` and `/admin/items/new` stays disabled unless the
 server-side `ADMIN_ITEM_CREATION_ENABLED` flag is exactly `true`. Do not enable
-it until both reviewed migrations have been checked and applied and the RLS
+it until all reviewed migrations have been checked and applied and the RLS
 checks below pass.
 
 1. In Supabase SQL Editor, inspect the current item schema:
@@ -91,7 +91,16 @@ checks below pass.
    requirements. Apply it manually only after reviewing the schema and every
    current item policy.
 
-5. Add the intended admin user's Auth UUID to `public.approved_admins` in SQL
+5. Review
+   [`supabase/migrations/20261125180200_admin_item_category.sql`](./supabase/migrations/20261125180200_admin_item_category.sql).
+   It checks whether `items.category` exists and adds it only if absent. An
+   existing non-text category column stops the migration for manual review.
+   The category field uses the provisional choices “Other item” and “Stallion
+   breeding,” centralized in the application for later revision. Apply this
+   migration manually only after inspecting the current column; it does not
+   change grants, RLS policies, public access, or `image_urls`.
+
+6. Add the intended admin user's Auth UUID to `public.approved_admins` in SQL
    Editor:
 
    ```sql
@@ -99,7 +108,7 @@ checks below pass.
    values ('<AUTH_USER_UUID>');
    ```
 
-6. Confirm the migrations created the expected policies and RLS remains enabled:
+7. Confirm the migrations created the expected policies and RLS remains enabled:
 
    ```sql
    select policyname, permissive, roles, cmd, qual, with_check
@@ -119,7 +128,7 @@ checks below pass.
    `approved_admins` policy should allow authenticated users to read their own
    membership.
 
-7. With a normal, non-admin test user's access token, send a direct authenticated
+8. With a normal, non-admin test user's access token, send a direct authenticated
    `POST /rest/v1/items` using the catalog's required fields (omitting
    `image_urls`, `id`, and `created_at`). It must be rejected by RLS and create
    no row. This direct PostgREST test is important: the app route also denies
@@ -147,7 +156,7 @@ checks below pass.
    this insert succeeds, stop: do not enable app saving, and review the
    `items` policies before proceeding.
 
-8. Only after schema and policy checks pass, set
+9. Only after schema and policy checks pass, set
    `ADMIN_ITEM_CREATION_ENABLED=true` in the server environment and restart or
    redeploy the app. Sign in as an approved admin, verify a no-session request
    is rejected, and test the Draft and Published lists at `/admin/items`.

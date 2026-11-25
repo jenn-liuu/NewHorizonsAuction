@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { normalizeSupabaseUrl } from "@/supabase-url";
+import { isItemCategory, type ItemCategory } from "@/item-categories";
 
 type AuthorizationResult =
   | { ok: true; client: SupabaseClient }
@@ -12,6 +13,7 @@ export type ItemWrite = {
   minimum_bid: number | null;
   bid_increment: number | null;
   donor_url: string | null;
+  category: ItemCategory;
   status: "draft" | "published";
 };
 
@@ -211,6 +213,13 @@ export function parseItemInput(
     return { ok: false, message: "The item title must be 200 characters or fewer." };
   }
 
+  if (!isItemCategory(value.category)) {
+    return {
+      ok: false,
+      message: "Choose a valid item category.",
+    };
+  }
+
   const descriptionInput = value.description;
   if (descriptionInput !== undefined && typeof descriptionInput !== "string") {
     return { ok: false, message: "The item description is invalid." };
@@ -283,6 +292,7 @@ export function parseItemInput(
       minimum_bid: minimumBid.amount,
       bid_increment: bidIncrement.amount,
       donor_url: donorUrl,
+      category: value.category,
       status: intent === "publish" ? "published" : "draft",
     },
   };

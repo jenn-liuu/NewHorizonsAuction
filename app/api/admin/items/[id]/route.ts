@@ -12,7 +12,7 @@ export async function GET(
     const { data, error } = await authorization.client
       .from("items")
       .select(
-        "id, title, description, retail_value, minimum_bid, bid_increment, donor_url, status, created_at",
+        "id, title, description, retail_value, minimum_bid, bid_increment, donor_url, category, status, created_at",
       )
       .eq("id", id)
       .maybeSingle();
